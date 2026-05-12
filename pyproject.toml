@@ -1,0 +1,10 @@
+[project]
+name = "simple-grokking-cma-es"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "numpy>=2.4.4",
+    "pypop7>=0.0.82",
+    "torch>=2.11.0",
+    "tqdm>=4.0",
+]
