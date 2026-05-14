@@ -6,6 +6,7 @@ import os
 from train import model
 import tqdm
 from sys import argv
+
 plt.style.use("mplstyle.mplstyle")
 
 
@@ -108,7 +109,7 @@ def plot_metrics(log_dir):
     ax[0].set_ylabel("Loss")
     ax[0].legend()
     ax[0].set_yscale("log")
-    ax[0].set_ylim(train_loss.min()*0.9, val_loss.max() * 1.)
+    ax[0].set_ylim(train_loss.min() * 0.9, val_loss.max() * 1.0)
 
     ax[1].plot(epochs, train_acc, label="Train")
     ax[1].plot(epochs, val_acc, label="Val")
@@ -123,6 +124,7 @@ def plot_metrics(log_dir):
     fig.savefig(savefile)
     print(f"Saved {savefile}\n")
 
+
 if __name__ == "__main__":
     logs = os.listdir("log")
     if not os.path.exists("log") or len(logs) == 0:
@@ -133,5 +135,6 @@ if __name__ == "__main__":
         log_dir = os.path.join("log", log)
         if "--anim" in argv:
             from sklearn.decomposition import PCA
+
             animate_embedddings(log_dir)
         plot_metrics(log_dir)

@@ -1,36 +1,121 @@
+import argparse
 import torch
 import torch.nn as nn
-import numpy as np
-import tqdm
 from log import Logger
-from sys import argv
-from pypop7.optimizers.es.lmcmaes import LMCMAES
+import algorithms.gradient as gradient_alg
+import algorithms.cmaes as cmaes_alg
+import algorithms.cpso as cpso_alg
+import algorithms.de as de_alg
+import algorithms.g3pcx as g3pcx_alg
 
 torch.manual_seed(2)
-grok = "--grok" in argv
-do_log = "--log" in argv
-use_cmaes = "--cmaes" in argv
-logger = Logger("grokking" if grok else "comprehension") if do_log else None
 
-# Hyperparameters
-num_epochs = int(argv[argv.index("--epochs") + 1]) if "--epochs" in argv else 10_000
-learning_rate = 3e-2
-weight_decay = 3e-2 if grok else 5
-sigma = 0.5       # LMCMAES: initial step size
-bound_norm = 5.0  # LMCMAES: search space bounded to [-bound_norm, bound_norm]
 P = 53
 train_frac = 0.6
 
-# Data - sum of two numbers mod 53
-X = torch.cartesian_prod(torch.arange(P), torch.arange(P))
-y = (X[:, 0] + X[:, 1]) % P
-shuffle = torch.randperm(len(X))
-X, y = X[shuffle], y[shuffle]
-X_train, X_val = X[: int(train_frac * len(X))], X[int(train_frac * len(X)) :]
-y_train, y_val = y[: int(train_frac * len(y))], y[int(train_frac * len(y)) :]
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Grokking experiments with modular addition"
+    )
+    parser.add_argument(
+        "--algo",
+        choices=["gradient", "cmaes", "cpso", "de", "g3pcx"],
+        default="gradient",
+        help="Optimization algorithm (default: gradient)",
+    )
+    parser.add_argument(
+        "--grok",
+        action="store_true",
+        help="Grokking mode: low weight decay (0.03 vs 5)",
+    )
+    parser.add_argument(
+        "--log",
+        action="store_true",
+        help="Enable metric logging and model checkpointing",
+    )
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=10_000,
+        help="Training epochs / generations (default: 10000)",
+    )
+
+    g = parser.add_argument_group("gradient options")
+    g.add_argument(
+        "--lr", type=float, default=3e-2, help="Learning rate for AdamW (default: 3e-2)"
+    )
+
+    evo = parser.add_argument_group("evolutionary options (cmaes / cpso / de / g3pcx)")
+    evo.add_argument(
+        "--bound-norm",
+        type=float,
+        default=5.0,
+        help="Search space boundary ±bound-norm (default: 5.0)",
+    )
+    evo.add_argument(
+        "--n-individuals",
+        type=int,
+        default=None,
+        help="Population size (default: auto from ndim)",
+    )
+    evo.add_argument(
+        "--seed", type=int, default=2, help="RNG seed for the optimizer (default: 2)"
+    )
+    evo.add_argument(
+        "--sigma",
+        type=float,
+        default=0.5,
+        help="Initial step size (cmaes) / initial population spread around model weights (cpso, de, g3pcx) (default: 0.5)",
+    )
+
+    parser.add_argument_group("cmaes options")  # no extra args beyond shared
+
+    pso = parser.add_argument_group("cpso options")
+    pso.add_argument(
+        "--cognition",
+        type=float,
+        default=1.49,
+        help="Cognitive learning rate (default: 1.49)",
+    )
+    pso.add_argument(
+        "--society",
+        type=float,
+        default=1.49,
+        help="Social learning rate (default: 1.49)",
+    )
+
+    de = parser.add_argument_group("de options (TDE)")
+    de.add_argument(
+        "--f", type=float, default=0.99, help="Mutation factor (default: 0.99)"
+    )
+    de.add_argument(
+        "--cr", type=float, default=0.85, help="Crossover rate (default: 0.85)"
+    )
+    de.add_argument(
+        "--tm",
+        type=float,
+        default=0.05,
+        help="Trigonometric mutation probability (default: 0.05)",
+    )
+
+    ga = parser.add_argument_group("g3pcx options")
+    ga.add_argument(
+        "--n-offsprings",
+        type=int,
+        default=2,
+        help="Offspring per generation for G3PCX (default: 2)",
+    )
+    ga.add_argument(
+        "--n-parents",
+        type=int,
+        default=3,
+        help="Parents selected per generation for G3PCX (default: 3)",
+    )
+
+    return parser.parse_args()
 
 
-# Model
 class Model(nn.Module):
     def __init__(self, hidden_dim=128):
         super().__init__()
@@ -45,127 +130,77 @@ class Model(nn.Module):
         return x
 
 
-model = Model()
-criterion = nn.CrossEntropyLoss()
-
-
-def train_gradient():
-    optimizer = torch.optim.AdamW(
-        model.parameters(), lr=learning_rate, weight_decay=weight_decay
-    )
-    pbar = tqdm.trange(num_epochs, leave=True, position=0)
-    for epoch in pbar:
-        optimizer.zero_grad()
-        y_pred = model(X_train)
-        loss = criterion(y_pred, y_train)
-        loss.backward()
-        optimizer.step()
-
-        with torch.no_grad():
-            train_acc = (y_pred.argmax(dim=1) == y_train).float().mean() * 100
-            y_pred_val = model(X_val)
-            val_loss = criterion(y_pred_val, y_val)
-            val_acc = (y_pred_val.argmax(dim=1) == y_val).float().mean() * 100
-
-        pbar.set_description(
-            f"{loss:10.2f}, {train_acc:>3.0f} | {val_loss:>8.2f}, {val_acc:>4.0f}"
-        )
-        if do_log:
-            logger.log(
-                model=model,
-                epoch=epoch,
-                train_loss=loss,
-                train_acc=train_acc,
-                val_loss=val_loss,
-                val_acc=val_acc,
-            )
-
-
-def train_cmaes():
-    ndim = sum(p.numel() for p in model.parameters())
-    pop_size = 4 + int(3 * np.log(ndim))
-
-    def set_params(x):
-        x_t = torch.from_numpy(x.astype(np.float32))
-        idx = 0
-        with torch.no_grad():
-            for p in model.parameters():
-                n = p.numel()
-                p.copy_(x_t[idx : idx + n].reshape(p.shape))
-                idx += n
-
-    def get_params():
-        return np.concatenate([p.detach().numpy().ravel() for p in model.parameters()])
-
-    eval_count = [0]
-    best_loss = [float("inf")]
-    best_x = [get_params()]
-    pbar = tqdm.tqdm(total=num_epochs, leave=True, position=0)
-
-    def fitness(x):
-        set_params(x)
-        with torch.no_grad():
-            logits = model(X_train)
-            loss = criterion(logits, y_train).item() + np.linalg.norm(x) * weight_decay
-
-        if loss < best_loss[0]:
-            best_loss[0] = loss
-            best_x[0] = x.copy()
-
-        eval_count[0] += 1
-        if eval_count[0] % pop_size == 0:
-            gen = eval_count[0] // pop_size
-            set_params(best_x[0])
-            with torch.no_grad():
-                tr_logits = model(X_train)
-                tr_loss = criterion(tr_logits, y_train)
-                tr_acc = (tr_logits.argmax(1) == y_train).float().mean() * 100
-                vl_logits = model(X_val)
-                vl_loss = criterion(vl_logits, y_val)
-                vl_acc = (vl_logits.argmax(1) == y_val).float().mean() * 100
-            pbar.set_description(
-                f"{tr_loss:10.2f}, {tr_acc:>3.0f} | {vl_loss:>8.2f}, {vl_acc:>4.0f}"
-            )
-            pbar.update(1)
-            if do_log:
-                logger.log(
-                    model=model,
-                    epoch=gen,
-                    train_loss=tr_loss,
-                    train_acc=tr_acc,
-                    val_loss=vl_loss,
-                    val_acc=vl_acc,
-                )
-
-        return loss
-
-    print(f"ndim={ndim}, pop_size={pop_size}, sigma={sigma}, bound_norm={bound_norm}")
-    problem = {
-        "fitness_function": fitness,
-        "ndim_problem": ndim,
-        "lower_boundary": -bound_norm,
-        "upper_boundary": bound_norm,
-        "initial_lower_boundary": -bound_norm,
-        "initial_upper_boundary": bound_norm,
-    }
-    options = {
-        "max_function_evaluations": num_epochs * pop_size,
-        "x": get_params(),
-        "sigma": sigma,
-        "seed_rng": 2,
-        "verbose": False,
-        "verbose_frequency": int(1e9),
-    }
-    results = LMCMAES(problem, options).optimize()
-    pbar.close()
-
-    set_params(results["best_so_far_x"])
-    print(f"Best train loss: {results['best_so_far_y']:.4f}")
-
-
 if __name__ == "__main__":
+    args = parse_args()
+
+    weight_decay = 3e-2 if args.grok else 5
+    run_name = f"{args.algo}_{'grokking' if args.grok else 'comprehension'}"
+    logger = Logger(run_name) if args.log else None
+
+    X = torch.cartesian_prod(torch.arange(P), torch.arange(P))
+    y = (X[:, 0] + X[:, 1]) % P
+    shuffle = torch.randperm(len(X))
+    X, y = X[shuffle], y[shuffle]
+    X_train = X[: int(train_frac * len(X))]
+    X_val = X[int(train_frac * len(X)) :]
+    y_train = y[: int(train_frac * len(y))]
+    y_val = y[int(train_frac * len(y)) :]
+
+    model = Model()
+    criterion = nn.CrossEntropyLoss()
+
     print("Train Loss, Acc | Val Loss, Acc")
-    if use_cmaes:
-        train_cmaes()
-    else:
-        train_gradient()
+
+    common = dict(
+        model=model,
+        criterion=criterion,
+        X_train=X_train,
+        y_train=y_train,
+        X_val=X_val,
+        y_val=y_val,
+        num_epochs=args.epochs,
+        weight_decay=weight_decay,
+        logger=logger,
+    )
+
+    if args.algo == "gradient":
+        gradient_alg.run(**common, lr=args.lr)
+    elif args.algo == "cmaes":
+        cmaes_alg.run(
+            **common,
+            sigma=args.sigma,
+            bound_norm=args.bound_norm,
+            n_individuals=args.n_individuals,
+            seed=args.seed,
+        )
+    elif args.algo == "cpso":
+        cpso_alg.run(
+            **common,
+            cognition=args.cognition,
+            society=args.society,
+            sigma=args.sigma,
+            bound_norm=args.bound_norm,
+            n_individuals=args.n_individuals,
+            seed=args.seed,
+        )
+    elif args.algo == "de":
+        de_alg.run(
+            **common,
+            f=args.f,
+            cr=args.cr,
+            tm=args.tm,
+            sigma=args.sigma,
+            bound_norm=args.bound_norm,
+            n_individuals=args.n_individuals,
+            seed=args.seed,
+        )
+    elif args.algo == "g3pcx":
+        g3pcx_alg.run(
+            **common,
+            n_offsprings=args.n_offsprings,
+            n_parents=args.n_parents,
+            sigma=args.sigma,
+            bound_norm=args.bound_norm,
+            n_individuals=args.n_individuals,
+            seed=args.seed,
+        )
