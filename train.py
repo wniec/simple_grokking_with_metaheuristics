@@ -7,6 +7,7 @@ import algorithms.cmaes as cmaes_alg
 import algorithms.cpso as cpso_alg
 import algorithms.de as de_alg
 import algorithms.g3pcx as g3pcx_alg
+import algorithms.moea as moea_alg
 
 torch.manual_seed(2)
 
@@ -20,7 +21,7 @@ def parse_args():
     )
     parser.add_argument(
         "--algo",
-        choices=["gradient", "cmaes", "cpso", "de", "g3pcx"],
+        choices=["gradient", "cmaes", "cpso", "de", "g3pcx", "moea"],
         default="gradient",
         help="Optimization algorithm (default: gradient)",
     )
@@ -69,7 +70,13 @@ def parse_args():
         help="Initial step size (cmaes) / initial population spread around model weights (cpso, de, g3pcx) (default: 0.5)",
     )
 
-    parser.add_argument_group("cmaes options")  # no extra args beyond shared
+    cmaes = parser.add_argument_group("cmaes options")
+    cmaes.add_argument(
+        "--rank",
+        type=int,
+        default=0,
+        help="Low-rank approximation rank for CMA-ES (0 = disabled, >0 = reshape params to sqrt(ndim)×sqrt(ndim) and optimize U@V.T with given rank)",
+    )
 
     pso = parser.add_argument_group("cpso options")
     pso.add_argument(
@@ -172,6 +179,7 @@ if __name__ == "__main__":
             bound_norm=args.bound_norm,
             n_individuals=args.n_individuals,
             seed=args.seed,
+            rank=args.rank,
         )
     elif args.algo == "cpso":
         cpso_alg.run(
@@ -199,6 +207,14 @@ if __name__ == "__main__":
             **common,
             n_offsprings=args.n_offsprings,
             n_parents=args.n_parents,
+            sigma=args.sigma,
+            bound_norm=args.bound_norm,
+            n_individuals=args.n_individuals,
+            seed=args.seed,
+        )
+    elif args.algo == "moea":
+        moea_alg.run(
+            **common,
             sigma=args.sigma,
             bound_norm=args.bound_norm,
             n_individuals=args.n_individuals,
