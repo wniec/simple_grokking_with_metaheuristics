@@ -1,9 +1,12 @@
+import json
 from matplotlib import pyplot as plt
 from matplotlib.animation import FuncAnimation
 import numpy as np
 import torch
 import os
-from train import model
+from train import MLPModel
+
+model = MLPModel()
 import tqdm
 from sys import argv
 
@@ -11,28 +14,38 @@ plt.style.use("mplstyle.mplstyle")
 
 
 def _get_metrics(log_dir, skip=1):
-    # Load Data
-    metrics = np.loadtxt(
-        os.path.join(log_dir, "metrics.csv"), delimiter=",", skiprows=1
+    jsonl_path = os.path.join(log_dir, "metrics.jsonl")
+    csv_path = os.path.join(log_dir, "metrics.csv")
+    if os.path.exists(jsonl_path):
+        with open(jsonl_path) as f:
+            rows = [json.loads(line) for line in f][::skip]
+        def col(key):
+            return np.array([r.get(key, float("nan")) for r in rows])
+        return (
+            col("epoch").astype(int),
+            col("train_loss"), col("train_acc"),
+            col("val_loss"), col("val_acc"),
+            col("weight_max"), col("weight_mean"), col("weight_median"), col("weight_norm"),
+        )
+    metrics = np.loadtxt(csv_path, delimiter=",", skiprows=1)
+    def csv_col(i, default=float("nan")):
+        return metrics[::skip, i] if metrics.shape[1] > i else np.full(len(metrics[::skip, 0]), default)
+    return (
+        metrics[::skip, 0].astype(int),
+        csv_col(1), csv_col(2), csv_col(3), csv_col(4),
+        csv_col(5), csv_col(6), csv_col(7), csv_col(8),
     )
-    epochs = metrics[::skip, 0].astype(int)
-    train_loss = metrics[::skip, 1]
-    train_acc = metrics[::skip, 2]
-    val_loss = metrics[::skip, 3]
-    val_acc = metrics[::skip, 4]
-    return epochs, train_loss, train_acc, val_loss, val_acc
 
 
-def _load_embeddings(log_dir, epoch):
-    # Load Model
-    model.load_state_dict(torch.load(os.path.join(log_dir, "models", f"{epoch}.pt")))
+def _load_embeddings(log_dir, epoch=None):
+    model.load_state_dict(torch.load(os.path.join(log_dir, "model.pt")))
     return model.embedding.weight.detach().numpy()
 
 
 def animate_embedddings(log_dir):
     # Load Data
     print(f"Loading {log_dir}...")
-    epochs, train_loss, train_acc, val_loss, val_acc = _get_metrics(log_dir, skip=1)
+    epochs, train_loss, train_acc, val_loss, val_acc, *_ = _get_metrics(log_dir, skip=1)
 
     # PCA
     all_embeddings = []
@@ -98,12 +111,10 @@ def animate_embedddings(log_dir):
 
 
 def plot_metrics(log_dir):
-    # Load Data
     print(f"Loading {log_dir}...")
-    epochs, train_loss, train_acc, val_loss, val_acc = _get_metrics(log_dir)
+    epochs, train_loss, train_acc, val_loss, val_acc, weight_max, weight_mean, weight_median, weight_norm = _get_metrics(log_dir)
 
-    # Plot
-    fig, ax = plt.subplots(2, 1, sharex=True, dpi=200)
+    fig, ax = plt.subplots(3, 1, sharex=True, dpi=200)
     ax[0].plot(epochs, train_loss, label="Train")
     ax[0].plot(epochs, val_loss, label="Val")
     ax[0].set_ylabel("Loss")
@@ -114,10 +125,18 @@ def plot_metrics(log_dir):
     ax[1].plot(epochs, train_acc, label="Train")
     ax[1].plot(epochs, val_acc, label="Val")
     ax[1].set_ylabel("Accuracy")
-    ax[1].set_xlabel("Epoch")
-    ax[0].set_xscale("log")
     ax[1].legend()
 
+    ax[2].plot(epochs, weight_max, label="max |w|")
+    ax[2].plot(epochs, weight_mean, label="mean |w|")
+    ax[2].plot(epochs, weight_median, label="median |w|")
+    ax[2].plot(epochs, weight_norm, label="‖w‖")
+    ax[2].set_ylabel("Weight stats")
+    ax[2].set_xlabel("Epoch")
+    ax[2].set_yscale("log")
+    ax[2].legend()
+
+    ax[0].set_xscale("log")
     fig.tight_layout()
     name = os.path.basename(log_dir)
     savefile = os.path.join(f"metrics_{name}.jpg")

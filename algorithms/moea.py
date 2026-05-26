@@ -2,6 +2,7 @@ import numpy as np
 import torch
 import tqdm
 
+from algorithms._common import weight_stats
 from pymoo.algorithms.moo.nsga2 import NSGA2
 from pymoo.core.callback import Callback
 from pymoo.core.problem import Problem
@@ -95,6 +96,7 @@ class _GenCallback(Callback):
                 train_acc=tr_acc,
                 val_loss=vl_loss,
                 val_acc=vl_acc,
+                **weight_stats(self.model),
             )
 
 

@@ -7,6 +7,16 @@ def get_params(model):
     return np.concatenate([p.detach().numpy().ravel() for p in model.parameters()])
 
 
+def weight_stats(model):
+    w = get_params(model)
+    return dict(
+        weight_max=float(np.max(np.abs(w))),
+        weight_mean=float(np.mean(np.abs(w))),
+        weight_median=float(np.median(np.abs(w))),
+        weight_norm=float(np.linalg.norm(w)),
+    )
+
+
 def set_params(model, x):
     x_t = torch.from_numpy(x.astype(np.float32))
     idx = 0
@@ -67,6 +77,7 @@ def make_fitness(
                     train_acc=tr_acc,
                     val_loss=vl_loss,
                     val_acc=vl_acc,
+                    **weight_stats(model),
                 )
 
         return loss

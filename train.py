@@ -11,7 +11,7 @@ import algorithms.moea as moea_alg
 
 torch.manual_seed(2)
 
-P = 53
+P = 17
 train_frac = 0.6
 
 
@@ -34,6 +34,18 @@ def parse_args():
         "--log",
         action="store_true",
         help="Enable metric logging and model checkpointing",
+    )
+    parser.add_argument(
+        "--arch",
+        choices=["mlp", "cnn", "fft"],
+        default="mlp",
+        help="Model architecture (default: mlp)",
+    )
+    parser.add_argument(
+        "--hidden-dim",
+        type=int,
+        default=128,
+        help="Hidden dimension of the model (default: 128)",
     )
     parser.add_argument(
         "--epochs",
@@ -123,7 +135,7 @@ def parse_args():
     return parser.parse_args()
 
 
-class Model(nn.Module):
+class MLPModel(nn.Module):
     def __init__(self, hidden_dim=128):
         super().__init__()
         self.embedding = nn.Embedding(P, hidden_dim)
@@ -133,14 +145,43 @@ class Model(nn.Module):
     def forward(self, x):
         x = self.embedding(x).flatten(start_dim=1)
         x = torch.relu(self.fc1(x))
-        x = self.readout(x)
-        return x
+        return self.readout(x)
+
+
+class CNNModel(nn.Module):
+    def __init__(self, hidden_dim=128):
+        super().__init__()
+        self.embedding = nn.Embedding(P, hidden_dim)
+        # kernel_size=2 covers both token positions at once
+        self.conv = nn.Conv1d(hidden_dim, hidden_dim, kernel_size=2)
+        self.readout = nn.Linear(hidden_dim, P)
+
+    def forward(self, x):
+        x = self.embedding(x)           # (batch, 2, hidden_dim)
+        x = x.permute(0, 2, 1)         # (batch, hidden_dim, 2)
+        x = torch.relu(self.conv(x))    # (batch, hidden_dim, 1)
+        x = x.squeeze(-1)              # (batch, hidden_dim)
+        return self.readout(x)
+
+
+class FFTModel(nn.Module):
+    def __init__(self, hidden_dim=128):
+        super().__init__()
+        self.embedding = nn.Embedding(P, hidden_dim)
+        self.readout = nn.Linear(hidden_dim, P)
+
+    def forward(self, x):
+        e = self.embedding(x)                          # (batch, 2, hidden_dim)
+        Ea = torch.fft.rfft(e[:, 0, :])               # (batch, hidden_dim//2+1) complex
+        Eb = torch.fft.rfft(e[:, 1, :])
+        eab = torch.fft.irfft(Ea * Eb, n=e.shape[-1]) # circular conv → (batch, hidden_dim)
+        return self.readout(torch.relu(eab))
 
 
 if __name__ == "__main__":
     args = parse_args()
 
-    weight_decay = 3e-2 if args.grok else 5
+    weight_decay = 6e-5 if args.grok else 5
     run_name = f"{args.algo}_{'grokking' if args.grok else 'comprehension'}"
     logger = Logger(run_name) if args.log else None
 
@@ -153,9 +194,18 @@ if __name__ == "__main__":
     y_train = y[: int(train_frac * len(y))]
     y_val = y[int(train_frac * len(y)) :]
 
-    model = Model()
+    arch = {"mlp": MLPModel, "cnn": CNNModel, "fft": FFTModel}[args.arch]
+    model = arch(hidden_dim=args.hidden_dim)
     criterion = nn.CrossEntropyLoss()
 
+    import math
+    n_params = sum(p.numel() for p in model.parameters())
+    if args.rank > 0:
+        n = math.ceil(math.sqrt(n_params))
+        search_dim = 2 * n * args.rank
+        print(f"Model parameters: {n_params:,} | search dim: {search_dim:,} (low-rank rank={args.rank})")
+    else:
+        print(f"Model parameters: {n_params:,} | search dim: {n_params:,}")
     print("Train Loss, Acc | Val Loss, Acc")
 
     common = dict(
@@ -171,7 +221,7 @@ if __name__ == "__main__":
     )
 
     if args.algo == "gradient":
-        gradient_alg.run(**common, lr=args.lr)
+        gradient_alg.run(**common, lr=args.lr, rank=args.rank)
     elif args.algo == "cmaes":
         cmaes_alg.run(
             **common,
