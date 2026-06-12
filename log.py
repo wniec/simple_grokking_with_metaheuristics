@@ -12,7 +12,9 @@ class Logger:
         self.model_file = os.path.join(root, "model.pt")
 
     def log(self, model=None, **metrics):
-        serializable = {k: v.item() if hasattr(v, "item") else v for k, v in metrics.items()}
+        serializable = {
+            k: v.item() if hasattr(v, "item") else v for k, v in metrics.items()
+        }
         self.metrics_file.write(json.dumps(serializable) + "\n")
         self.metrics_file.flush()
 

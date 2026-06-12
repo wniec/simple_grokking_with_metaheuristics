@@ -12,6 +12,8 @@ from sys import argv
 
 plt.style.use("mplstyle.mplstyle")
 
+IMAGES_DIR = "images"
+
 
 def _get_metrics(log_dir, skip=1):
     jsonl_path = os.path.join(log_dir, "metrics.jsonl")
@@ -19,21 +21,40 @@ def _get_metrics(log_dir, skip=1):
     if os.path.exists(jsonl_path):
         with open(jsonl_path) as f:
             rows = [json.loads(line) for line in f][::skip]
+
         def col(key):
             return np.array([r.get(key, float("nan")) for r in rows])
+
         return (
             col("epoch").astype(int),
-            col("train_loss"), col("train_acc"),
-            col("val_loss"), col("val_acc"),
-            col("weight_max"), col("weight_mean"), col("weight_median"), col("weight_norm"),
+            col("train_loss"),
+            col("train_acc"),
+            col("val_loss"),
+            col("val_acc"),
+            col("weight_max"),
+            col("weight_mean"),
+            col("weight_median"),
+            col("weight_norm"),
         )
     metrics = np.loadtxt(csv_path, delimiter=",", skiprows=1)
+
     def csv_col(i, default=float("nan")):
-        return metrics[::skip, i] if metrics.shape[1] > i else np.full(len(metrics[::skip, 0]), default)
+        return (
+            metrics[::skip, i]
+            if metrics.shape[1] > i
+            else np.full(len(metrics[::skip, 0]), default)
+        )
+
     return (
         metrics[::skip, 0].astype(int),
-        csv_col(1), csv_col(2), csv_col(3), csv_col(4),
-        csv_col(5), csv_col(6), csv_col(7), csv_col(8),
+        csv_col(1),
+        csv_col(2),
+        csv_col(3),
+        csv_col(4),
+        csv_col(5),
+        csv_col(6),
+        csv_col(7),
+        csv_col(8),
     )
 
 
@@ -105,14 +126,24 @@ def animate_embedddings(log_dir):
 
     anim = FuncAnimation(fig, update, frames=len(epochs), blit=True)
     name = os.path.basename(log_dir)
-    savefile = os.path.join(f"emb_{name}.mp4")
+    savefile = os.path.join(IMAGES_DIR, f"emb_{name}.mp4")
     anim.save(savefile, writer="ffmpeg", fps=len(epochs) // 10)
     print(f"Saved {savefile}\n")
 
 
 def plot_metrics(log_dir):
     print(f"Loading {log_dir}...")
-    epochs, train_loss, train_acc, val_loss, val_acc, weight_max, weight_mean, weight_median, weight_norm = _get_metrics(log_dir)
+    (
+        epochs,
+        train_loss,
+        train_acc,
+        val_loss,
+        val_acc,
+        weight_max,
+        weight_mean,
+        weight_median,
+        weight_norm,
+    ) = _get_metrics(log_dir)
 
     fig, ax = plt.subplots(3, 1, sharex=True, dpi=200)
     ax[0].plot(epochs, train_loss, label="Train")
@@ -139,7 +170,7 @@ def plot_metrics(log_dir):
     ax[0].set_xscale("log")
     fig.tight_layout()
     name = os.path.basename(log_dir)
-    savefile = os.path.join(f"metrics_{name}.jpg")
+    savefile = os.path.join(IMAGES_DIR, f"metrics_{name}.jpg")
     fig.savefig(savefile)
     print(f"Saved {savefile}\n")
 
@@ -149,6 +180,8 @@ if __name__ == "__main__":
     if not os.path.exists("log") or len(logs) == 0:
         print("No logs found. Run train.py first.")
         exit()
+
+    os.makedirs(IMAGES_DIR, exist_ok=True)
 
     for log in logs:
         log_dir = os.path.join("log", log)

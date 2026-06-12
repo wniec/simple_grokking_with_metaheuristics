@@ -157,10 +157,10 @@ class CNNModel(nn.Module):
         self.readout = nn.Linear(hidden_dim, P)
 
     def forward(self, x):
-        x = self.embedding(x)           # (batch, 2, hidden_dim)
-        x = x.permute(0, 2, 1)         # (batch, hidden_dim, 2)
-        x = torch.relu(self.conv(x))    # (batch, hidden_dim, 1)
-        x = x.squeeze(-1)              # (batch, hidden_dim)
+        x = self.embedding(x)  # (batch, 2, hidden_dim)
+        x = x.permute(0, 2, 1)  # (batch, hidden_dim, 2)
+        x = torch.relu(self.conv(x))  # (batch, hidden_dim, 1)
+        x = x.squeeze(-1)  # (batch, hidden_dim)
         return self.readout(x)
 
 
@@ -171,10 +171,12 @@ class FFTModel(nn.Module):
         self.readout = nn.Linear(hidden_dim, P)
 
     def forward(self, x):
-        e = self.embedding(x)                          # (batch, 2, hidden_dim)
-        Ea = torch.fft.rfft(e[:, 0, :])               # (batch, hidden_dim//2+1) complex
+        e = self.embedding(x)  # (batch, 2, hidden_dim)
+        Ea = torch.fft.rfft(e[:, 0, :])  # (batch, hidden_dim//2+1) complex
         Eb = torch.fft.rfft(e[:, 1, :])
-        eab = torch.fft.irfft(Ea * Eb, n=e.shape[-1]) # circular conv → (batch, hidden_dim)
+        eab = torch.fft.irfft(
+            Ea * Eb, n=e.shape[-1]
+        )  # circular conv → (batch, hidden_dim)
         return self.readout(torch.relu(eab))
 
 
@@ -199,11 +201,14 @@ if __name__ == "__main__":
     criterion = nn.CrossEntropyLoss()
 
     import math
+
     n_params = sum(p.numel() for p in model.parameters())
     if args.rank > 0:
         n = math.ceil(math.sqrt(n_params))
         search_dim = 2 * n * args.rank
-        print(f"Model parameters: {n_params:,} | search dim: {search_dim:,} (low-rank rank={args.rank})")
+        print(
+            f"Model parameters: {n_params:,} | search dim: {search_dim:,} (low-rank rank={args.rank})"
+        )
     else:
         print(f"Model parameters: {n_params:,} | search dim: {n_params:,}")
     print("Train Loss, Acc | Val Loss, Acc")

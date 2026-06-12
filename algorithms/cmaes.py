@@ -40,11 +40,23 @@ def run(
     if rank > 0:
         n = int(np.ceil(np.sqrt(ndim)))
         search_dim = 2 * n * rank
-        pop_size = n_individuals if n_individuals is not None else 4 + int(3 * np.log(search_dim))
+        pop_size = (
+            n_individuals
+            if n_individuals is not None
+            else 4 + int(3 * np.log(search_dim))
+        )
 
         raw_fitness, pbar, best_x = make_fitness(
-            model, criterion, X_train, y_train, X_val, y_val,
-            weight_decay, logger, pop_size, num_epochs,
+            model,
+            criterion,
+            X_train,
+            y_train,
+            X_val,
+            y_val,
+            weight_decay,
+            logger,
+            pop_size,
+            num_epochs,
         )
 
         def fitness(z):
@@ -52,7 +64,9 @@ def run(
 
         z0 = _lr_encode(get_params(model), n, rank)
 
-        print(f"ndim={ndim}, rank={rank}, n={n}, search_dim={search_dim}, pop_size={pop_size}, sigma={sigma}")
+        print(
+            f"ndim={ndim}, rank={rank}, n={n}, search_dim={search_dim}, pop_size={pop_size}, sigma={sigma}"
+        )
         problem = {
             "fitness_function": fitness,
             "ndim_problem": search_dim,
@@ -76,14 +90,26 @@ def run(
         set_params(model, best_params)
         print(f"Best train loss: {results['best_so_far_y']:.4f}")
     else:
-        pop_size = n_individuals if n_individuals is not None else 4 + int(3 * np.log(ndim))
-
-        fitness, pbar, best_x = make_fitness(
-            model, criterion, X_train, y_train, X_val, y_val,
-            weight_decay, logger, pop_size, num_epochs,
+        pop_size = (
+            n_individuals if n_individuals is not None else 4 + int(3 * np.log(ndim))
         )
 
-        print(f"ndim={ndim}, pop_size={pop_size}, sigma={sigma}, bound_norm={bound_norm}")
+        fitness, pbar, best_x = make_fitness(
+            model,
+            criterion,
+            X_train,
+            y_train,
+            X_val,
+            y_val,
+            weight_decay,
+            logger,
+            pop_size,
+            num_epochs,
+        )
+
+        print(
+            f"ndim={ndim}, pop_size={pop_size}, sigma={sigma}, bound_norm={bound_norm}"
+        )
         problem = {
             "fitness_function": fitness,
             "ndim_problem": ndim,

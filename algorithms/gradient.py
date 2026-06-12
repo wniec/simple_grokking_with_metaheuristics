@@ -16,8 +16,10 @@ class _LowRankWrapper(nn.Module):
         params = get_params(model)
         padded = np.zeros(self.n * self.n)
         padded[: len(params)] = params
-        U_np, s_np, Vt_np = np.linalg.svd(padded.reshape(self.n, self.n), full_matrices=False)
-        sq_s = np.sqrt(s_np[: rank])
+        U_np, s_np, Vt_np = np.linalg.svd(
+            padded.reshape(self.n, self.n), full_matrices=False
+        )
+        sq_s = np.sqrt(s_np[:rank])
         self.U = nn.Parameter(torch.tensor(U_np[:, :rank] * sq_s, dtype=torch.float32))
         self.V = nn.Parameter(torch.tensor(Vt_np[:rank].T * sq_s, dtype=torch.float32))
 
