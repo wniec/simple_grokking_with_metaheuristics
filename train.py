@@ -11,7 +11,7 @@ import algorithms.moea as moea_alg
 
 torch.manual_seed(2)
 
-P = 17
+P = 3
 train_frac = 0.6
 
 
@@ -56,7 +56,7 @@ def parse_args():
 
     g = parser.add_argument_group("gradient options")
     g.add_argument(
-        "--lr", type=float, default=3e-2, help="Learning rate for AdamW (default: 3e-2)"
+        "--lr", type=float, default=8e-2, help="Learning rate for AdamW (default: 3e-2)"
     )
 
     evo = parser.add_argument_group("evolutionary options (cmaes / cpso / de / g3pcx)")
@@ -181,7 +181,7 @@ class FFTModel(nn.Module):
 if __name__ == "__main__":
     args = parse_args()
 
-    weight_decay = 6e-5 if args.grok else 5
+    weight_decay = 6e-5 if args.grok else 1
     run_name = f"{args.algo}_{'grokking' if args.grok else 'comprehension'}"
     logger = Logger(run_name) if args.log else None
 
