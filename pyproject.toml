@@ -3,6 +3,7 @@ name = "simple-grokking-cma-es"
 version = "0.1.0"
 requires-python = ">=3.13"
 dependencies = [
+    "lonkit>=0.3.0",
     "numpy>=2.4.4",
     "pymoo>=0.6.1.6",
     "pypop7>=0.0.82",

@@ -8,6 +8,7 @@ import algorithms.cpso as cpso_alg
 import algorithms.de as de_alg
 import algorithms.g3pcx as g3pcx_alg
 import algorithms.moea as moea_alg
+import algorithms.lon as lon_alg
 
 torch.manual_seed(2)
 
@@ -34,6 +35,12 @@ def parse_args():
         "--log",
         action="store_true",
         help="Enable metric logging and model checkpointing",
+    )
+    parser.add_argument(
+        "--lon",
+        action="store_true",
+        help="Analyze the fitness landscape with a Local Optima Network (lonkit) "
+        "instead of training. Best on a tiny model, e.g. --arch fft --hidden-dim 4.",
     )
     parser.add_argument(
         "--arch",
@@ -132,6 +139,28 @@ def parse_args():
         help="Parents selected per generation for G3PCX (default: 3)",
     )
 
+    lon = parser.add_argument_group(
+        "fitness-landscape (lonkit) options, used with --lon"
+    )
+    lon.add_argument(
+        "--lon-runs",
+        type=int,
+        default=100,
+        help="Number of independent basin-hopping runs for the LON (default: 100)",
+    )
+    lon.add_argument(
+        "--lon-no-change",
+        type=int,
+        default=250,
+        help="Basin-hopping iterations without improvement before stopping (default: 250)",
+    )
+    lon.add_argument(
+        "--lon-step-size",
+        type=float,
+        default=0.1,
+        help="Basin-hopping perturbation step size (default: 0.1)",
+    )
+
     return parser.parse_args()
 
 
@@ -211,6 +240,26 @@ if __name__ == "__main__":
         )
     else:
         print(f"Model parameters: {n_params:,} | search dim: {n_params:,}")
+
+    if args.lon:
+        # The landscape is a property of the (model, data, weight_decay) problem,
+        # not of any optimizer, so name the run by architecture + regime.
+        lon_name = f"{args.arch}_{'grokking' if args.grok else 'comprehension'}"
+        lon_alg.run(
+            model=model,
+            criterion=criterion,
+            X_train=X_train,
+            y_train=y_train,
+            weight_decay=weight_decay,
+            run_name=lon_name,
+            bound_norm=args.bound_norm,
+            n_runs=args.lon_runs,
+            n_iter_no_change=args.lon_no_change,
+            step_size=args.lon_step_size,
+            seed=args.seed,
+        )
+        raise SystemExit
+
     print("Train Loss, Acc | Val Loss, Acc")
 
     common = dict(

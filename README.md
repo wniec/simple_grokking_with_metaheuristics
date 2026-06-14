@@ -48,6 +48,21 @@ Metric curves for each optimizer under both regimes (all generated with `P = 3`,
 | `g3pcx`    | ![](./images/metrics_g3pcx_grokking.jpg)    | _(not generated)_ |
 | `moea`     | ![](./images/metrics_moea_grokking.jpg)     | ![](./images/metrics_moea_comprehension.jpg) |
 
+## Fitness landscape (LON)
+Instead of training, you can analyze the *structure* of the optimized problem with a **Local Optima Network (LON)** via [lonkit](https://github.com/helix-agh/lonkit). Pass `--lon`:
+
+```bash
+python train.py --lon --arch fft --hidden-dim 4 --grok
+```
+
+This maps the same regularized objective the evolutionary optimizers minimize — `train_loss(weights) + weight_decay · mean(weights²)` — over the model's parameter space (bounded by `±--bound-norm`). lonkit runs basin-hopping to find local optima, connects them into a network, and reports landscape metrics such as `n_optima`, `n_funnels`, `n_global_funnels`, `global_strength`, and `success`. It writes three files to `images/`:
+
+- `lon_<arch>_<regime>.png` — 2D LON plot (nodes are optima colored by fitness, the global optimum in red; edges are basin-hopping transitions),
+- `lon3d_<arch>_<regime>.html` — interactive 3D view,
+- `lon_<arch>_<regime>.json` — the metrics.
+
+LON construction scales poorly with dimension, so use a tiny model (`--arch fft --hidden-dim 4` is 27 parameters); a warning is printed for larger ones. `--grok` selects which weight-decay regime's landscape is analyzed.
+
 ## Options
 Common:
 - `--algo {gradient,cmaes,cpso,de,g3pcx,moea}` — optimizer (default `gradient`).
@@ -73,5 +88,12 @@ Optimizer-specific:
 - `de`: `--f` (default `0.99`), `--cr` (default `0.85`), `--tm` (default `0.05`).
 - `g3pcx`: `--n-offsprings` (default `2`), `--n-parents` (default `3`).
 
+Fitness landscape (`--lon`):
+- `--lon` — analyze the landscape with a LON instead of training.
+- `--lon-runs` — independent basin-hopping runs (default `100`).
+- `--lon-no-change` — basin-hopping iterations without improvement before stopping (default `250`).
+- `--lon-step-size` — basin-hopping perturbation step size (default `0.1`).
+- `--bound-norm` / `--seed` — reused for the search-space bounds and RNG seed.
+
 ## Requirements
-Install the project dependencies (`torch`, `numpy`, `tqdm`, `pypop7`, `pymoo`) — e.g. `pip install -e .` or `uv sync`. Plotting additionally uses `matplotlib`, and the `--anim` option for `plot.py` needs `scikit-learn`.
+Install the project dependencies (`torch`, `numpy`, `tqdm`, `pypop7`, `pymoo`, `lonkit`) — e.g. `pip install -e .` or `uv sync`. Plotting additionally uses `matplotlib`, and the `--anim` option for `plot.py` needs `scikit-learn`.
