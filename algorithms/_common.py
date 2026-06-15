@@ -2,6 +2,28 @@ import torch
 import numpy as np
 import tqdm
 
+from algorithms import distance
+
+
+# Optional capture of every evaluated (x, fitness) — the optimizer's search
+# trajectory — used for trajectory-based ELA. None = not recording.
+_TRAJECTORY = None
+
+
+def enable_trajectory():
+    """Start recording evaluated points (opt-in, before running an optimizer)."""
+    global _TRAJECTORY
+    _TRAJECTORY = []
+
+
+def get_trajectory():
+    """Return the recorded trajectory as (X, y) arrays, or None if empty."""
+    if not _TRAJECTORY:
+        return None
+    X = np.array([t[0] for t in _TRAJECTORY])
+    y = np.array([t[1] for t in _TRAJECTORY])
+    return X, y
+
 
 def get_params(model):
     return np.concatenate([p.detach().numpy().ravel() for p in model.parameters()])
@@ -50,6 +72,9 @@ def make_fitness(
             logits = model(X_train)
             loss = criterion(logits, y_train).item() + np.mean(x**2) * weight_decay
 
+        if _TRAJECTORY is not None:
+            _TRAJECTORY.append((x.copy(), loss))
+
         if loss < best_loss[0]:
             best_loss[0] = loss
             best_x[0] = x.copy()
@@ -65,9 +90,11 @@ def make_fitness(
                 vl_logits = model(X_val)
                 vl_loss = criterion(vl_logits, y_val)
                 vl_acc = (vl_logits.argmax(1) == y_val).float().mean() * 100
-            pbar.set_description(
-                f"{tr_loss:10.2f}, {tr_acc:>3.0f} | {vl_loss:>8.2f}, {vl_acc:>4.0f}"
-            )
+            dist = distance.track(model)
+            desc = f"{tr_loss:10.2f}, {tr_acc:>3.0f} | {vl_loss:>8.2f}, {vl_acc:>4.0f}"
+            if dist:
+                desc += f" | wΔ={dist['weight_dist_aligned']:.2f} fΔ={dist['func_prob_rmse']:.3f}"
+            pbar.set_description(desc)
             pbar.update(1)
             if logger is not None:
                 logger.log(
@@ -77,6 +104,7 @@ def make_fitness(
                     train_acc=tr_acc,
                     val_loss=vl_loss,
                     val_acc=vl_acc,
+                    **dist,
                     **weight_stats(model),
                 )
 

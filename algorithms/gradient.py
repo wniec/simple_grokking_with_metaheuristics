@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 import tqdm
 from algorithms._common import get_params, set_params, weight_stats
+from algorithms import distance
 
 
 class _LowRankWrapper(nn.Module):
@@ -75,12 +76,15 @@ def run(
             val_loss = criterion(y_pred_val, y_val)
             val_acc = (y_pred_val.argmax(dim=1) == y_val).float().mean() * 100
 
-        pbar.set_description(
-            f"{loss:10.2f}, {train_acc:>3.0f} | {val_loss:>8.2f}, {val_acc:>4.0f}"
-        )
+        # Sync the low-rank factors back into `model` before measuring distance.
+        if rank > 0 and (logger is not None or distance.active()):
+            net.write_back()
+        dist = distance.track(model)
+        desc = f"{loss:10.2f}, {train_acc:>3.0f} | {val_loss:>8.2f}, {val_acc:>4.0f}"
+        if dist:
+            desc += f" | wΔ={dist['weight_dist_aligned']:.2f} fΔ={dist['func_prob_rmse']:.3f}"
+        pbar.set_description(desc)
         if logger is not None:
-            if rank > 0:
-                net.write_back()
             logger.log(
                 model=model,
                 epoch=epoch,
@@ -88,6 +92,7 @@ def run(
                 train_acc=train_acc,
                 val_loss=val_loss,
                 val_acc=val_acc,
+                **dist,
                 **weight_stats(model),
             )
 

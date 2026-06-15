@@ -9,6 +9,9 @@ import algorithms.de as de_alg
 import algorithms.g3pcx as g3pcx_alg
 import algorithms.moea as moea_alg
 import algorithms.lon as lon_alg
+import algorithms.ela as ela_alg
+import algorithms.distance as distance
+import algorithms._common as common_alg
 
 torch.manual_seed(2)
 
@@ -43,6 +46,29 @@ def parse_args():
         "instead of training. Best on a tiny model, e.g. --arch fft --hidden-dim 4.",
     )
     parser.add_argument(
+        "--ela",
+        action="store_true",
+        help="Measure Exploratory Landscape Analysis (ELA) features of the fitness "
+        "landscape instead of training (meta, distribution, dispersion, NBC, "
+        "information content).",
+    )
+    parser.add_argument(
+        "--ela-trajectory",
+        action="store_true",
+        help="After training, compute ELA features from the optimizer's search "
+        "trajectory (every evaluated point) rather than a Latin-hypercube sample. "
+        "Requires a population-based --algo (cmaes / cpso / de / g3pcx).",
+    )
+    parser.add_argument(
+        "--track-optimum",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Track the current-best solution's distance to a stored optimum "
+        "(JSON of {layer: values}) during optimization. Reports a symmetry-aware "
+        "functional distance and a permutation-aligned weight distance.",
+    )
+    parser.add_argument(
         "--arch",
         choices=["mlp", "cnn", "fft"],
         default="mlp",
@@ -53,6 +79,12 @@ def parse_args():
         type=int,
         default=128,
         help="Hidden dimension of the model (default: 128)",
+    )
+    parser.add_argument(
+        "--P",
+        type=int,
+        default=P,
+        help=f"Modulus for the addition task: predict (a + b) mod P (default: {P})",
     )
     parser.add_argument(
         "--epochs",
@@ -161,15 +193,23 @@ def parse_args():
         help="Basin-hopping perturbation step size (default: 0.1)",
     )
 
+    ela = parser.add_argument_group("ELA options, used with --ela")
+    ela.add_argument(
+        "--ela-samples",
+        type=int,
+        default=None,
+        help="Latin-hypercube sample size for ELA (default: max(50*ndim, 200))",
+    )
+
     return parser.parse_args()
 
 
 class MLPModel(nn.Module):
-    def __init__(self, hidden_dim=128):
+    def __init__(self, hidden_dim=128, p=P):
         super().__init__()
-        self.embedding = nn.Embedding(P, hidden_dim)
+        self.embedding = nn.Embedding(p, hidden_dim)
         self.fc1 = nn.Linear(2 * hidden_dim, hidden_dim)
-        self.readout = nn.Linear(hidden_dim, P)
+        self.readout = nn.Linear(hidden_dim, p)
 
     def forward(self, x):
         x = self.embedding(x).flatten(start_dim=1)
@@ -178,12 +218,12 @@ class MLPModel(nn.Module):
 
 
 class CNNModel(nn.Module):
-    def __init__(self, hidden_dim=128):
+    def __init__(self, hidden_dim=128, p=P):
         super().__init__()
-        self.embedding = nn.Embedding(P, hidden_dim)
+        self.embedding = nn.Embedding(p, hidden_dim)
         # kernel_size=2 covers both token positions at once
         self.conv = nn.Conv1d(hidden_dim, hidden_dim, kernel_size=2)
-        self.readout = nn.Linear(hidden_dim, P)
+        self.readout = nn.Linear(hidden_dim, p)
 
     def forward(self, x):
         x = self.embedding(x)  # (batch, 2, hidden_dim)
@@ -194,10 +234,10 @@ class CNNModel(nn.Module):
 
 
 class FFTModel(nn.Module):
-    def __init__(self, hidden_dim=128):
+    def __init__(self, hidden_dim=128, p=P):
         super().__init__()
-        self.embedding = nn.Embedding(P, hidden_dim)
-        self.readout = nn.Linear(hidden_dim, P)
+        self.embedding = nn.Embedding(p, hidden_dim)
+        self.readout = nn.Linear(hidden_dim, p)
 
     def forward(self, x):
         e = self.embedding(x)  # (batch, 2, hidden_dim)
@@ -212,12 +252,12 @@ class FFTModel(nn.Module):
 if __name__ == "__main__":
     args = parse_args()
 
-    weight_decay = 6e-5 if args.grok else 1
-    run_name = f"{args.algo}_{'grokking' if args.grok else 'comprehension'}"
+    weight_decay = 8e-5 if args.grok else 5.0
+    run_name = f"{args.algo}_P{args.P}_{'grokking' if args.grok else 'comprehension'}"
     logger = Logger(run_name) if args.log else None
 
-    X = torch.cartesian_prod(torch.arange(P), torch.arange(P))
-    y = (X[:, 0] + X[:, 1]) % P
+    X = torch.cartesian_prod(torch.arange(args.P), torch.arange(args.P))
+    y = (X[:, 0] + X[:, 1]) % args.P
     shuffle = torch.randperm(len(X))
     X, y = X[shuffle], y[shuffle]
     X_train = X[: int(train_frac * len(X))]
@@ -226,7 +266,7 @@ if __name__ == "__main__":
     y_val = y[int(train_frac * len(y)) :]
 
     arch = {"mlp": MLPModel, "cnn": CNNModel, "fft": FFTModel}[args.arch]
-    model = arch(hidden_dim=args.hidden_dim)
+    model = arch(hidden_dim=args.hidden_dim, p=args.P)
     criterion = nn.CrossEntropyLoss()
 
     import math
@@ -244,7 +284,9 @@ if __name__ == "__main__":
     if args.lon:
         # The landscape is a property of the (model, data, weight_decay) problem,
         # not of any optimizer, so name the run by architecture + regime.
-        lon_name = f"{args.arch}_{'grokking' if args.grok else 'comprehension'}"
+        lon_name = (
+            f"{args.arch}_P{args.P}_{'grokking' if args.grok else 'comprehension'}"
+        )
         lon_alg.run(
             model=model,
             criterion=criterion,
@@ -259,6 +301,40 @@ if __name__ == "__main__":
             seed=args.seed,
         )
         raise SystemExit
+
+    if args.ela:
+        # Landscape features describe the (model, data, weight_decay) problem,
+        # independent of any optimizer — name by architecture, P, and regime so a
+        # sweep over P produces one file per value.
+        ela_name = (
+            f"{args.arch}_P{args.P}_{'grokking' if args.grok else 'comprehension'}"
+        )
+        ela_alg.run(
+            model=model,
+            criterion=criterion,
+            X_train=X_train,
+            y_train=y_train,
+            weight_decay=weight_decay,
+            run_name=ela_name,
+            bound_norm=args.bound_norm,
+            n_samples=args.ela_samples,
+            seed=args.seed,
+            p=args.P,
+        )
+        raise SystemExit
+
+    if args.track_optimum:
+        X_all = torch.cartesian_prod(torch.arange(args.P), torch.arange(args.P))
+        optimum = distance.load_optimum(args.track_optimum)
+        distance.set_reference(
+            distance.Reference(
+                lambda: arch(hidden_dim=args.hidden_dim, p=args.P), optimum, X_all
+            )
+        )
+        print(f"Tracking distance to optimum: {args.track_optimum}")
+
+    if args.ela_trajectory:
+        common_alg.enable_trajectory()
 
     print("Train Loss, Acc | Val Loss, Acc")
 
@@ -324,3 +400,44 @@ if __name__ == "__main__":
             n_individuals=args.n_individuals,
             seed=args.seed,
         )
+
+    # Each optimizer writes its best solution back into `model`, so the model's
+    # parameters now hold the values obtained by the optimization. Print them
+    # grouped by layer (named parameter).
+    print(f"\nOptimized model parameters ({n_params} values):")
+    for name, p in model.named_parameters():
+        values = p.detach().cpu().numpy().ravel().tolist()
+        print(f"  {name}")
+        print(f"    {values}")
+
+    final = distance.track(model)
+    if final:
+        print("\nDistance of optimized solution to stored optimum:")
+        print(
+            f"  functional           : prob_rmse={final['func_prob_rmse']:.4f}, "
+            f"argmax_disagreement={final['func_disagree'] * 100:.1f}%"
+        )
+        print(f"  weight (raw)         : {final['weight_dist_raw']:.4f}")
+        print(f"  weight (perm-aligned): {final['weight_dist_aligned']:.4f}")
+
+    if args.ela_trajectory:
+        traj = common_alg.get_trajectory()
+        if traj is None:
+            print(
+                "\nNo search trajectory captured — --ela-trajectory needs a "
+                "population-based --algo (cmaes / cpso / de / g3pcx)."
+            )
+        else:
+            X_traj, y_traj = traj
+            traj_name = (
+                f"{args.arch}_P{args.P}_{'grokking' if args.grok else 'comprehension'}"
+            )
+            ela_alg.features_from_sample(
+                X_traj,
+                y_traj,
+                run_name=traj_name,
+                seed=args.seed,
+                p=args.P,
+                prefix="ela_traj",
+                max_points=args.ela_samples or 2000,
+            )

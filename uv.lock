@@ -1463,6 +1463,7 @@ dependencies = [
     { name = "numpy" },
     { name = "pymoo" },
     { name = "pypop7" },
+    { name = "scipy" },
     { name = "torch" },
     { name = "tqdm" },
 ]
@@ -1473,6 +1474,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.4.4" },
     { name = "pymoo", specifier = ">=0.6.1.6" },
     { name = "pypop7", specifier = ">=0.0.82" },
+    { name = "scipy", specifier = ">=1.17.1" },
     { name = "torch", specifier = ">=2.11.0" },
     { name = "tqdm", specifier = ">=4.0" },
 ]

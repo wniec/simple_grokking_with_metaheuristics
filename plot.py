@@ -12,50 +12,53 @@ from sys import argv
 
 plt.style.use("mplstyle.mplstyle")
 
-IMAGES_DIR = "images"
+from image_paths import image_path
 
 
 def _get_metrics(log_dir, skip=1):
+    """Load metrics for a run, or None if the run logged nothing usable.
+
+    Prefers a non-empty metrics.jsonl; falls back to a legacy metrics.csv.
+    """
     jsonl_path = os.path.join(log_dir, "metrics.jsonl")
     csv_path = os.path.join(log_dir, "metrics.csv")
+
+    rows = []
     if os.path.exists(jsonl_path):
         with open(jsonl_path) as f:
-            rows = [json.loads(line) for line in f][::skip]
+            rows = [json.loads(line) for line in f if line.strip()][::skip]
 
-        def col(key):
-            return np.array([r.get(key, float("nan")) for r in rows])
+    if rows:
+        keys = set().union(*(r.keys() for r in rows))
+        data = {k: np.array([r.get(k, float("nan")) for r in rows]) for k in keys}
+    elif os.path.exists(csv_path) and os.path.getsize(csv_path) > 0:
+        metrics = np.loadtxt(csv_path, delimiter=",", skiprows=1)
+        cols = [
+            "epoch",
+            "train_loss",
+            "train_acc",
+            "val_loss",
+            "val_acc",
+            "weight_max",
+            "weight_mean",
+            "weight_median",
+            "weight_norm",
+        ]
+        data = {
+            c: (
+                metrics[::skip, i]
+                if metrics.shape[1] > i
+                else np.full(len(metrics[::skip, 0]), float("nan"))
+            )
+            for i, c in enumerate(cols)
+        }
+    else:
+        return None
 
-        return (
-            col("epoch").astype(int),
-            col("train_loss"),
-            col("train_acc"),
-            col("val_loss"),
-            col("val_acc"),
-            col("weight_max"),
-            col("weight_mean"),
-            col("weight_median"),
-            col("weight_norm"),
-        )
-    metrics = np.loadtxt(csv_path, delimiter=",", skiprows=1)
-
-    def csv_col(i, default=float("nan")):
-        return (
-            metrics[::skip, i]
-            if metrics.shape[1] > i
-            else np.full(len(metrics[::skip, 0]), default)
-        )
-
-    return (
-        metrics[::skip, 0].astype(int),
-        csv_col(1),
-        csv_col(2),
-        csv_col(3),
-        csv_col(4),
-        csv_col(5),
-        csv_col(6),
-        csv_col(7),
-        csv_col(8),
-    )
+    if "epoch" not in data or len(data["epoch"]) == 0:
+        return None
+    data["epoch"] = data["epoch"].astype(int)
+    return data
 
 
 def _load_embeddings(log_dir, epoch=None):
@@ -66,7 +69,16 @@ def _load_embeddings(log_dir, epoch=None):
 def animate_embedddings(log_dir):
     # Load Data
     print(f"Loading {log_dir}...")
-    epochs, train_loss, train_acc, val_loss, val_acc, *_ = _get_metrics(log_dir, skip=1)
+    m = _get_metrics(log_dir, skip=1)
+    if m is None:
+        print("  (no metrics logged, skipping)\n")
+        return
+    epochs = m["epoch"]
+    nan = np.full(len(epochs), float("nan"))
+    train_loss = m.get("train_loss", nan)
+    train_acc = m.get("train_acc", nan)
+    val_loss = m.get("val_loss", nan)
+    val_acc = m.get("val_acc", nan)
 
     # PCA
     all_embeddings = []
@@ -126,26 +138,35 @@ def animate_embedddings(log_dir):
 
     anim = FuncAnimation(fig, update, frames=len(epochs), blit=True)
     name = os.path.basename(log_dir)
-    savefile = os.path.join(IMAGES_DIR, f"emb_{name}.mp4")
+    savefile = image_path(f"emb_{name}.mp4")
     anim.save(savefile, writer="ffmpeg", fps=len(epochs) // 10)
     print(f"Saved {savefile}\n")
 
 
 def plot_metrics(log_dir):
     print(f"Loading {log_dir}...")
-    (
-        epochs,
-        train_loss,
-        train_acc,
-        val_loss,
-        val_acc,
-        weight_max,
-        weight_mean,
-        weight_median,
-        weight_norm,
-    ) = _get_metrics(log_dir)
+    m = _get_metrics(log_dir)
+    if m is None:
+        print("  (no metrics logged, skipping)\n")
+        return
+    epochs = m["epoch"]
+    train_loss = m["train_loss"]
+    val_loss = m["val_loss"]
 
-    fig, ax = plt.subplots(3, 1, sharex=True, dpi=200)
+    def present(key):
+        return key in m and np.any(np.isfinite(m[key]))
+
+    # The accuracy panel is replaced by tracked optimum-distance series
+    # (logged only when training was run with --track-optimum).
+    tracked_weight = [
+        k for k in ("weight_dist_raw", "weight_dist_aligned") if present(k)
+    ]
+    tracked_func = [k for k in ("func_prob_rmse", "func_disagree") if present(k)]
+    has_tracked = bool(tracked_weight or tracked_func)
+
+    nrows = 3 if has_tracked else 2
+    fig, ax = plt.subplots(nrows, 1, sharex=True, dpi=200)
+
     ax[0].plot(epochs, train_loss, label="Train")
     ax[0].plot(epochs, val_loss, label="Val")
     ax[0].set_ylabel("Loss")
@@ -153,24 +174,44 @@ def plot_metrics(log_dir):
     ax[0].set_yscale("log")
     ax[0].set_ylim(train_loss.min() * 0.9, val_loss.max() * 1.0)
 
-    ax[1].plot(epochs, train_acc, label="Train")
-    ax[1].plot(epochs, val_acc, label="Val")
-    ax[1].set_ylabel("Accuracy")
-    ax[1].legend()
+    if has_tracked:
+        dax = ax[1]
+        wlabels = {"weight_dist_raw": "raw", "weight_dist_aligned": "aligned"}
+        for k in tracked_weight:
+            dax.plot(epochs, m[k], label=f"weight {wlabels[k]}")
+        dax.set_ylabel("Weight dist")
+        if tracked_weight:
+            dax.legend(loc="upper left", fontsize=6)
+        if tracked_func:
+            fax = dax.twinx()
+            fstyles = {
+                "func_prob_rmse": ("prob rmse", "C2--"),
+                "func_disagree": ("argmax disagree", "C3:"),
+            }
+            for k in tracked_func:
+                lbl, style = fstyles[k]
+                fax.plot(epochs, m[k], style, label=lbl)
+            fax.set_ylabel("Functional dist")
+            fax.legend(loc="upper right", fontsize=6)
 
-    ax[2].plot(epochs, weight_max, label="max |w|")
-    ax[2].plot(epochs, weight_mean, label="mean |w|")
-    ax[2].plot(epochs, weight_median, label="median |w|")
-    ax[2].plot(epochs, weight_norm, label="‖w‖")
-    ax[2].set_ylabel("Weight stats")
-    ax[2].set_xlabel("Epoch")
-    ax[2].set_yscale("log")
-    ax[2].legend()
+    weights_ax = ax[2] if has_tracked else ax[1]
+    for stat, lab in [
+        ("weight_max", "max |w|"),
+        ("weight_mean", "mean |w|"),
+        ("weight_median", "median |w|"),
+        ("weight_norm", "‖w‖"),
+    ]:
+        if present(stat):
+            weights_ax.plot(epochs, m[stat], label=lab)
+    weights_ax.set_ylabel("Weight stats")
+    weights_ax.set_xlabel("Epoch")
+    weights_ax.set_yscale("log")
+    weights_ax.legend()
 
     ax[0].set_xscale("log")
     fig.tight_layout()
     name = os.path.basename(log_dir)
-    savefile = os.path.join(IMAGES_DIR, f"metrics_{name}.jpg")
+    savefile = image_path(f"metrics_{name}.jpg")
     fig.savefig(savefile)
     print(f"Saved {savefile}\n")
 
@@ -180,8 +221,6 @@ if __name__ == "__main__":
     if not os.path.exists("log") or len(logs) == 0:
         print("No logs found. Run train.py first.")
         exit()
-
-    os.makedirs(IMAGES_DIR, exist_ok=True)
 
     for log in logs:
         log_dir = os.path.join("log", log)

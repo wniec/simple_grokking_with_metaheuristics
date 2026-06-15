@@ -10,6 +10,7 @@ from pymoo.core.sampling import Sampling
 from pymoo.optimize import minimize
 
 from algorithms._common import get_params, set_params
+from algorithms import distance
 
 
 class _GaussianSampling(Sampling):
@@ -93,10 +94,14 @@ class _GenCallback(Callback):
             vl_loss = self.criterion(vl_logits, self.y_val)
             vl_acc = (vl_logits.argmax(1) == self.y_val).float().mean() * 100
 
-        self.pbar.set_description(
+        dist = distance.track(self.model)
+        desc = (
             f"{tr_loss:10.2f}, {tr_acc:>3.0f} | {vl_loss:>8.2f}, {vl_acc:>4.0f}"
             f" | |w|²={F[best_idx, 1]:.3f}"
         )
+        if dist:
+            desc += f" | wΔ={dist['weight_dist_aligned']:.2f} fΔ={dist['func_prob_rmse']:.3f}"
+        self.pbar.set_description(desc)
         self.pbar.update(1)
         if self.logger is not None:
             self.logger.log(
@@ -106,6 +111,7 @@ class _GenCallback(Callback):
                 train_acc=tr_acc,
                 val_loss=vl_loss,
                 val_acc=vl_acc,
+                **dist,
                 **weight_stats(self.model),
             )
 

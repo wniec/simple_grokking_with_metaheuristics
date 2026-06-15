@@ -22,8 +22,7 @@ import torch
 
 from lonkit import compute_lon, BasinHoppingSamplerConfig, LONVisualizer
 from algorithms._common import set_params
-
-IMAGES_DIR = "images"
+from image_paths import image_path
 
 
 def _jsonable(v):
@@ -89,20 +88,19 @@ def run(
     for k, v in metrics.items():
         print(f"  {k}: {v}")
 
-    os.makedirs(IMAGES_DIR, exist_ok=True)
     viz = LONVisualizer()
 
-    plot_2d = os.path.join(IMAGES_DIR, f"lon_{run_name}.png")
+    plot_2d = image_path(f"lon_{run_name}.png")
     viz.plot_2d(cmlon, output_path=plot_2d, seed=seed)
     print(f"\nSaved {plot_2d}")
 
     # plot_3d returns a Plotly figure; write it as a self-contained interactive
     # HTML page (avoids the kaleido static-image path, which rejects .html).
-    plot_3d = os.path.join(IMAGES_DIR, f"lon3d_{run_name}.html")
+    plot_3d = image_path(f"lon3d_{run_name}.html")
     viz.plot_3d(cmlon, seed=seed).write_html(plot_3d)
     print(f"Saved {plot_3d}")
 
-    metrics_path = os.path.join(IMAGES_DIR, f"lon_{run_name}.json")
+    metrics_path = image_path(f"lon_{run_name}.json")
     with open(metrics_path, "w") as f:
         json.dump({k: _jsonable(v) for k, v in metrics.items()}, f, indent=2)
     print(f"Saved {metrics_path}")
