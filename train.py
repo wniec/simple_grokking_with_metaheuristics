@@ -1,4 +1,5 @@
 import argparse
+import os
 import torch
 import torch.nn as nn
 from log import Logger
@@ -17,6 +18,33 @@ torch.manual_seed(2)
 
 P = 3
 train_frac = 0.6
+
+WEIGHT_DECAY_CONFIG = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), ".config"
+)
+
+
+def load_weight_decay_config(path=WEIGHT_DECAY_CONFIG):
+    """Parse the `.config` file of `<algo>.<mode>.<P> = weight_decay` lines."""
+    cfg = {}
+    if not os.path.exists(path):
+        return cfg
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, val = line.split("=", 1)
+            cfg[key.strip()] = float(val.strip())
+    return cfg
+
+
+def weight_decay_for(cfg, algo, mode, p):
+    """Look up weight_decay: exact algo.mode.P, then default.<mode>, then builtin."""
+    for key in (f"{algo}.{mode}.{p}", f"default.{mode}"):
+        if key in cfg:
+            return cfg[key]
+    return 8e-5 if mode == "grokking" else 1.0
 
 
 def parse_args():
@@ -252,8 +280,10 @@ class FFTModel(nn.Module):
 if __name__ == "__main__":
     args = parse_args()
 
-    weight_decay = 8e-5 if args.grok else 5.0
-    run_name = f"{args.algo}_P{args.P}_{'grokking' if args.grok else 'comprehension'}"
+    mode = "grokking" if args.grok else "comprehension"
+    weight_decay = weight_decay_for(load_weight_decay_config(), args.algo, mode, args.P)
+    run_name = f"{args.algo}_P{args.P}_{mode}"
+    print(f"{run_name}: weight_decay={weight_decay} (from .config)")
     logger = Logger(run_name) if args.log else None
 
     X = torch.cartesian_prod(torch.arange(args.P), torch.arange(args.P))
@@ -400,15 +430,6 @@ if __name__ == "__main__":
             n_individuals=args.n_individuals,
             seed=args.seed,
         )
-
-    # Each optimizer writes its best solution back into `model`, so the model's
-    # parameters now hold the values obtained by the optimization. Print them
-    # grouped by layer (named parameter).
-    print(f"\nOptimized model parameters ({n_params} values):")
-    for name, p in model.named_parameters():
-        values = p.detach().cpu().numpy().ravel().tolist()
-        print(f"  {name}")
-        print(f"    {values}")
 
     final = distance.track(model)
     if final:

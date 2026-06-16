@@ -10,15 +10,15 @@ Beyond the standard gradient-based setup, the same model can be optimized with s
 ## Run
 Run `python train.py --grok` to see the grokking training curves:
 
-![grok](./images/metrics/P3/metrics_gradient_grokking.jpg)
+![grok](./images/metrics/P3/metrics_gradient_P3_grokking.jpg)
 
 and `python train.py` for a more "normal" (comprehension) run:
 
-![normal](./images/metrics/P3/metrics_gradient_comprehension.jpg)
+![normal](./images/metrics/P3/metrics_gradient_P3_comprehension.jpg)
 
 > **Note:** the graphs above were generated with `P = 3`, `--arch fft`, and `--hidden-dim 4` — a tiny model with only **27 parameters**.
 
-The only difference between these two runs is the weight decay: it is low (`6e-5`) in the grokking run and high (`1`) in the non-grokking (comprehension) run, toggled by `--grok`. For more details on the effect of hyperparameters on the grokking phenomenon, see [this paper: Towards understanding grokking](https://arxiv.org/abs/2205.10343).
+The only difference between these two runs is the weight decay: a low value in the grokking run and a high value in the non-grokking (comprehension) run, toggled by `--grok`. The exact value is read from the `.config` file, keyed by `<algo>.<mode>.<P>` (with a `default.<mode>` fallback), since different optimizers and moduli need different decay for grokking to appear — edit `.config` to retune. For more details on the effect of hyperparameters on the grokking phenomenon, see [this paper: Towards understanding grokking](https://arxiv.org/abs/2205.10343).
 
 The `--log` option logs training curves and a model checkpoint to `log/<run_name>/`. Running `python plot.py` then reads everything under `log/` and writes an `images/metrics/P<P>/metrics_<run_name>.jpg` plot for each run — Loss, weight statistics, and (when the run was trained with `--track-optimum`) the optimum-distance curves. e.g. the images above. Pass `python plot.py --anim` to additionally render an `images/emb/P<P>/emb_<run_name>.mp4` animation of the embeddings via PCA (requires `scikit-learn`).
 
@@ -47,7 +47,6 @@ Metric curves for each optimizer under both regimes (all generated with `P = 3`,
 | `cmaes`    | ![](./images/metrics/P3/metrics_cmaes_P3_grokking.jpg)       | ![](./images/metrics/P3/metrics_cmaes_P3_comprehension.jpg)    |
 | `cpso`     | ![](./images/metrics/P3/metrics_cpso_P3_grokking.jpg)        | ![](./images/metrics/P3/metrics_cpso_P3_comprehension.jpg)     |
 | `de`       | ![](./images/metrics/P3/metrics_de_P3_grokking.jpg)          | ![](./images/metrics/P3/metrics_de_P3_comprehension.jpg)       |
-| `g3pcx`    | ![](./images/metrics/P3/metrics_g3pcx_P3_grokking.jpg)       | ![](./images/metrics/P3/metrics_g3pcx_P3_comprehension.jpg)    |
 | `moea`     | ![](./images/metrics/P3/metrics_moea_P3_grokking.jpg)        | ![](./images/metrics/P3/metrics_moea_P3_comprehension.jpg)     |
 
 ## Fitness landscape (LON)
@@ -110,7 +109,7 @@ A neural network's weight space has **symmetries** — different weight vectors 
 Store an optimum (the per-layer parameter dump printed after training, saved as JSON `{layer: values}`), then track how close a new run gets to it:
 
 ```bash
-python train.py --algo cmaes --arch fft --hidden-dim 4 --grok --track-optimum optimum.json
+python train.py --algo cmaes --arch fft --hidden-dim 4 --grok --track-optimum optimum_P3.json
 ```
 
 Two symmetry-aware distances are reported (in the progress bar as `fΔ`/`wΔ`, logged to `metrics.jsonl` when `--log`, and printed at the end):
@@ -124,7 +123,7 @@ The stored optimum must come from the same `--arch`/`--hidden-dim`/`P` (validate
 Common:
 - `--algo {gradient,cmaes,cpso,de,g3pcx,moea}` — optimizer (default `gradient`).
 - `--arch {mlp,cnn,fft}` — model architecture (default `mlp`).
-- `--grok` — grokking mode: low weight decay (`6e-5`) instead of the comprehension default (`1`).
+- `--grok` — grokking mode (low weight decay) instead of comprehension (high). The actual value per `<algo>.<mode>.<P>` comes from `.config`.
 - `--hidden-dim N` — embedding / hidden dimension (default `128`).
 - `--epochs N` — training epochs / generations (default `10000`).
 - `--log` — enable metric logging and model checkpointing.

@@ -8,7 +8,7 @@ set -euo pipefail
 
 ARCH=fft
 P_VALUES="3 5 7 11"
-ALGOS="gradient cmaes de g3pcx cpso moea"
+ALGOS="gradient cmaes de cpso moea"
 
 # --- epochs = P_C(P) * algo_C(algo) ---------------------------------------- #
 # algo_C: base optimization budget per algorithm (gradient counts steps; the
@@ -18,7 +18,6 @@ algo_C() {
     gradient) echo 30000 ;;
     cmaes)    echo 300 ;;
     de)       echo 600 ;;
-    g3pcx)    echo 600 ;;
     cpso)     echo 1000 ;;
     moea)     echo 600 ;;
     *)        echo 1000 ;;
@@ -42,7 +41,12 @@ for p in $P_VALUES; do
   # A per-P stored optimum enables distance tracking. It must match this run's
   # arch / P / hidden_dim, so it is opt-in: drop an optimum_P<P>.json to use it.
   track=""
-  [ -f "optimum_P${p}.json" ] && track="--track-optimum optimum_P${p}.json"
+  if [ -f "optima/optimum_P${p}.json" ]; then
+    track="--track-optimum optima/optimum_P${p}.json"
+    echo ">>> P=$p: tracking distance to optima/optimum_P${p}.json"
+  else
+    echo ">>> P=$p: no optimum_P${p}.json found — distance tracking OFF"
+  fi
 
   for algo in $ALGOS; do
     epochs=$(( $(P_C "$p") * $(algo_C "$algo") ))
