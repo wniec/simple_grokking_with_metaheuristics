@@ -25,6 +25,35 @@ def get_trajectory():
     return X, y
 
 
+# Optional per-generation ELA over a moving window of recently evaluated points.
+# None = disabled; otherwise dict(n_last_points, seed, every).
+_ELA_WINDOW = None
+
+
+def enable_ela_window(n_last_points, seed=2, every=1):
+    """Compute ELA features every `every` generations over a moving window of
+    the last `n_last_points` evaluated points, tracking how each feature evolves
+    during the search. Implies trajectory recording (the window reads from it)."""
+    global _ELA_WINDOW
+    enable_trajectory()
+    _ELA_WINDOW = dict(n_last_points=int(n_last_points), seed=int(seed), every=int(every))
+
+
+def _ela_window_features():
+    """ELA features over the last `n_last_points` evaluated points, or {} if the
+    window is too small / the feature is disabled."""
+    if _ELA_WINDOW is None or not _TRAJECTORY:
+        return {}
+    window = _TRAJECTORY[-_ELA_WINDOW["n_last_points"] :]
+    if len(window) < 4:  # need a handful of points for any feature to be meaningful
+        return {}
+    X = np.array([t[0] for t in window])
+    y = np.array([t[1] for t in window])
+    from algorithms import ela  # local import avoids a circular import at load time
+
+    return ela.window_features(X, y, seed=_ELA_WINDOW["seed"])
+
+
 def get_params(model):
     return np.concatenate([p.detach().numpy().ravel() for p in model.parameters()])
 
@@ -107,6 +136,10 @@ def make_fitness(
                     **dist,
                     **weight_stats(model),
                 )
+                if _ELA_WINDOW is not None and gen % _ELA_WINDOW["every"] == 0:
+                    ela_feats = _ela_window_features()
+                    if ela_feats:
+                        logger.log_to("ela_window.jsonl", epoch=gen, **ela_feats)
 
         return loss
 

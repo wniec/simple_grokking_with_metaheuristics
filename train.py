@@ -88,6 +88,23 @@ def parse_args():
         "Requires a population-based --algo (cmaes / cpso / de / g3pcx).",
     )
     parser.add_argument(
+        "--ela-window",
+        type=int,
+        default=None,
+        metavar="N",
+        help="During training, compute ELA features every generation over a "
+        "moving window of the last N evaluated points, logging how each feature "
+        "evolves. Requires --log and a population-based --algo (cmaes / cpso / "
+        "de / g3pcx). Plot with plot.py.",
+    )
+    parser.add_argument(
+        "--ela-window-every",
+        type=int,
+        default=1,
+        metavar="K",
+        help="Compute the moving-window ELA every K generations (default: 1).",
+    )
+    parser.add_argument(
         "--track-optimum",
         type=str,
         default=None,
@@ -365,6 +382,21 @@ if __name__ == "__main__":
 
     if args.ela_trajectory:
         common_alg.enable_trajectory()
+
+    if args.ela_window:
+        if logger is None:
+            print(
+                "\n--ela-window needs --log to record the feature series; "
+                "enabling logging."
+            )
+            logger = Logger(run_name)
+        common_alg.enable_ela_window(
+            args.ela_window, seed=args.seed, every=args.ela_window_every
+        )
+        print(
+            f"Tracking ELA features every {args.ela_window_every} generation(s) "
+            f"over a moving window of {args.ela_window} points."
+        )
 
     print("Train Loss, Acc | Val Loss, Acc")
 

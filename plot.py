@@ -216,6 +216,153 @@ def plot_metrics(log_dir):
     print(f"Saved {savefile}\n")
 
 
+def _band_first(epochs, series, band):
+    """First generation where `series` enters the bottom `band` fraction of its
+    range, or None. Used to locate when a loss bottoms out."""
+    finite = np.isfinite(series)
+    if not finite.any():
+        return None
+    ep, v = epochs[finite], series[finite]
+    lo, hi = float(np.min(v)), float(np.max(v))
+    if hi - lo <= 0:
+        return None
+    hit = np.where(v <= lo + band * (hi - lo))[0]
+    return int(ep[hit[0]]) if hit.size else None
+
+
+def _grokking_span(m, band=0.1):
+    """(start, end) generations bracketing grokking, or (None, None).
+
+    Grokking shows up in the loss, not accuracy: train_loss drops early
+    (memorization) while val_loss stays high, then val_loss descends much later
+    (generalization). Accuracy is too coarse to see this on small val sets (e.g.
+    P=3 has only 4 val points). So:
+
+      start = train_loss bottoms out  (memorization complete)
+      end   = val_loss settles into the bottom `band` of its range and stays there
+              (generalization complete)
+
+    The span between them is the grokking gap. Returns (None, None) if val_loss
+    never settles low (no grokking) or the losses aren't logged."""
+    if m is None or "val_loss" not in m:
+        return None, None
+    epochs, vl = m["epoch"], m["val_loss"]
+    finite = np.isfinite(vl)
+    if not finite.any():
+        return None, None
+    ep, v = epochs[finite], vl[finite]
+    lo, hi = float(np.min(v)), float(np.max(v))
+    if hi - lo <= 0:
+        return None, None  # flat val_loss — nothing to mark
+    above = np.where(v > lo + band * (hi - lo))[0]
+    if not above.size:
+        return None, None  # always low — generalized from the start, no grokking
+    i = above[-1] + 1  # first generation after the last excursion above the band
+    if i >= len(ep):
+        return None, None  # ended high → never grokked
+    end = int(ep[i])
+
+    # start = memorization point (train_loss bottoms out); fall back to the
+    # val_loss peak — the onset of its descent — if train_loss is unavailable or
+    # bottoms after val has already generalized.
+    start = _band_first(epochs, m["train_loss"], band) if "train_loss" in m else None
+    if start is None or start >= end:
+        start = int(ep[int(np.argmax(v))])
+    return min(start, end), end
+
+
+def plot_ela_window(log_dir):
+    """Plot how each ELA feature evolves over generations.
+
+    Reads the side-channel `ela_window.jsonl` written when training with
+    `--ela-window`; one small panel per feature. The first panel shows train/val
+    loss as a grokking reference, and the grokking span (memorization → general-
+    ization) is shaded on every panel so feature dynamics can be compared against
+    when grokking happens. Silently skips runs without the side-channel file.
+    """
+    path = os.path.join(log_dir, "ela_window.jsonl")
+    if not os.path.exists(path):
+        return
+    with open(path) as f:
+        rows = [json.loads(line) for line in f if line.strip()]
+    if not rows:
+        return
+    print(f"Loading {path}...")
+
+    epochs = np.array([r["epoch"] for r in rows])
+    feats = sorted(set().union(*(r.keys() for r in rows)) - {"epoch"})
+    if not feats:
+        return
+
+    # Grokking reference from the per-generation metrics stream.
+    metrics = _get_metrics(log_dir)
+    gstart, gend = _grokking_span(metrics)
+
+    def mark_span(ax):
+        if gstart is not None and gend is not None:
+            ax.axvspan(gstart, gend, color="C3", alpha=0.12, lw=0)
+            ax.axvline(gstart, color="C3", ls="--", lw=0.7, alpha=0.7)
+            ax.axvline(gend, color="C3", ls="--", lw=0.7, alpha=0.7)
+
+    ncol = 4
+    npanel = len(feats) + 1  # +1 for the grokking reference panel
+    nrow = int(np.ceil(npanel / ncol))
+    fig, axes = plt.subplots(
+        nrow, ncol, figsize=(3.2 * ncol, 2.4 * nrow), dpi=150, squeeze=False
+    )
+    axes = axes.reshape(-1)
+
+    # Panel 0: grokking reference (train/val loss, log scale — grokking is the
+    # late descent of val_loss after train_loss has already bottomed out, which
+    # accuracy is too coarse to show on small val sets).
+    gax = axes[0]
+    if metrics is not None and "val_loss" in metrics and np.any(
+        np.isfinite(metrics["val_loss"])
+    ):
+        me = metrics["epoch"]
+        if "train_loss" in metrics:
+            gax.plot(me, metrics["train_loss"], lw=1, label="train")
+        gax.plot(me, metrics["val_loss"], lw=1, label="val")
+        gax.set_ylabel("Loss", fontsize=6)
+        gax.set_yscale("log")
+        gax.legend(fontsize=5, loc="upper right")
+        title = (
+            f"Grokking gens {gstart}–{gend}"
+            if gstart is not None
+            else "Grokking (none)"
+        )
+    else:
+        gax.text(0.5, 0.5, "no loss metrics", ha="center", va="center", fontsize=6)
+        title = "Grokking (n/a)"
+    gax.set_title(title, fontsize=6)
+    gax.set_xlabel("Generation", fontsize=6)
+    gax.set_xscale("log")  # grokking is read on a log generation axis
+    gax.tick_params(labelsize=5)
+    mark_span(gax)
+
+    for ax, feat in zip(axes[1:], feats):
+        y = np.array([r.get(feat, float("nan")) for r in rows], dtype=float)
+        finite = np.isfinite(y)
+        if finite.any():
+            ax.plot(epochs[finite], y[finite], lw=1)
+        mark_span(ax)
+        ax.set_title(feat, fontsize=6)
+        ax.set_xlabel("Generation", fontsize=6)
+        ax.set_xscale("log")  # match the grokking panel so the span aligns
+        ax.tick_params(labelsize=5)
+
+    for ax in axes[npanel:]:
+        ax.axis("off")
+
+    name = os.path.basename(log_dir)
+    fig.suptitle(f"ELA features over training  ({name})", fontsize=11)
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    savefile = image_path(f"ela_window_{name}.jpg")
+    fig.savefig(savefile)
+    plt.close(fig)
+    print(f"Saved {savefile}\n")
+
+
 if __name__ == "__main__":
     logs = os.listdir("log")
     if not os.path.exists("log") or len(logs) == 0:
@@ -229,3 +376,4 @@ if __name__ == "__main__":
 
             animate_embedddings(log_dir)
         plot_metrics(log_dir)
+        plot_ela_window(log_dir)

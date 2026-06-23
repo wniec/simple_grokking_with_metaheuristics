@@ -7,8 +7,8 @@ applicable, by the modulus P of the run:
     images/sweeps/<filename>               cross-P aggregate plots (no single P)
 
 Categories are inferred from the filename prefix (metrics_, lon_/lon3d_, ela_,
-ela_traj_, emb_). P is read from the `_P<n>_` token; files predating P-keying
-are assumed to be P=3 (the original default).
+ela_traj_, ela_window_, emb_). P is read from the `_P<n>_` token; files predating
+P-keying are assumed to be P=3 (the original default).
 """
 
 import os
@@ -27,6 +27,8 @@ def categorize(filename):
         category = "metrics"
     elif base.startswith(("lon_", "lon3d_")):
         category = "lon"
+    elif base.startswith("ela_window_"):
+        category = "ela_window"
     elif base.startswith("ela_traj_"):
         category = "ela_traj"
     elif base.startswith("ela_"):

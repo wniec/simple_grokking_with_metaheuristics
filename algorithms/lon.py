@@ -58,6 +58,7 @@ def run(
         n_iter_no_change=n_iter_no_change,
         step_size=step_size,
         seed=seed,
+        n_jobs=-1,  # basin-hopping runs are independent — always use all cores
     )
 
     print(

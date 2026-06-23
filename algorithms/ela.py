@@ -218,6 +218,34 @@ def _all_features(X, y, seed):
     return features
 
 
+def window_features(X, y, seed=2):
+    """ELA features over a small *moving window* of evaluated points.
+
+    Unlike `_all_features`, this is robust to degenerate windows (too few or
+    near-duplicate points, constant objective values): a feature group that
+    cannot be computed contributes NaNs instead of raising, so it can be called
+    safely once per generation during an optimization run.
+    """
+    X = np.asarray(X, dtype=float)
+    y = np.asarray(y, dtype=float)
+    dists = pdist(X)
+    D = squareform(dists)
+    groups = (
+        lambda: _ela_meta(X, y),
+        lambda: _ela_distr(y),
+        lambda: _dispersion(X, y, dists),
+        lambda: _nbc(X, y, D),
+        lambda: _information_content(X, y, seed),
+    )
+    features = {}
+    for group in groups:
+        try:
+            features.update(group())
+        except Exception:
+            continue
+    return features
+
+
 def _save(features, run_name, prefix, meta):
     print(f"\n{prefix} features:")
     for k, v in features.items():
